@@ -1,29 +1,30 @@
-Datenbankstruktur des BTS Version 3
-===================================
+Database Structure of the BTSv3
+===============================
 
-Einleitung
-----------
+Introduction
+------------
 
-Das BTS3 läuft auf einer CouchDB. Es gibt eine zentrale Instanz sowie als Teil jeder BTS3-Installation eine lokale
-Instanz. Die lokale Instanz wird über die CouchDB-eigene Synchronisationsfunktion bidirektional mit der zentralen
-Instanz synchronisiert. Lokal redet der BTS3-Java-Prozess über HTTP an localhost mit der lokalen CouchDB. Im
-BTS3-Java-prozess läuft eingebettet eine Elasticsearch-Instanz, die mit Daten aus der lokalen CouchDB gefüttert wird.
-Deshalb ist die auch ständig nicht mehr synchron und muss ständig von Hand über den BTS3-Datenbankmanager neu
-synchronisiert werden.
+BTS version 3 is running on a CouchDB. There is a single central instance as well as one local instance per BTS3
+installation. The local instances are kept in sync with the central instance using the synchronization feature built
+into CouchDB. The java process of a BTS3 instance talks to its local CouchDB instance using HTTP against localhost.
+Embedded into the BTS3 java process is an Elasticsearch instance that is fed from the local couchdb. This
+synchronization being only half working is the reason one frequently must manually kick of "indexing" actions from a
+complaining BTS3 dialog.
 
 This document starts out with an overview of all object types defined in the source, not their manifestation in the
 database. Thus it includes super-types that are not directly present in the database.
 
-Allgemeines Objektlayout in der Datenbank
+General Object Layout inside the Database
 -----------------------------------------
 
-Alle hier aufgelisteten Objekte bilden 1:1 auf Java-Klassen ab. All diese Klassen sind Teil des Eclipse eObject-Systems.
-Jedes Objekt enthält ein Attribut ``eClass``, das eine Pseudo-URL enthält, die den Typen dieses Objektes eindeutig
-identifiziert. Diese URL folgt immer dem Schema ``http://{"btsmodel" oder "btsCorpusModel"}/1.0#//{Name der eClass}``.
-Es gibt zwei Gruppen von eClass-Definitionen, oder *Modelle*: Das ``btsmodel`` sowie das ``btsCorpusModel`` (sic!).
-Ersteres enthält hauptsächlich interne Verwaltungsklassen, letzteres die Klassen für die eigentlichen Nutzdaten. Im
-folgenden eine Auflistung aller definierten ``eClass``-Pseudo-URLs mit der Angabe, ob diese auch tatsächlich irgendwo in
-der Datenbank zu finden sind.
+All object types listed here map 1:1 to Java classes. Each of these classes is mapped to Eclipse's eObject system. Every
+object in the database contains an attribute ``eClass`` that uniquely identifies the type of this object. This attribute
+looks like a HTTP URL but isn't: ``http://{"btsmodel" or "btsCorpusModel"}/1.0#//{eClass name}``.  There is two groups
+of eClass definitions, called models: The ``btsmodel`` or base model and the ``btsCorpusModel`` (sic!) or corpus model.
+The base model mainly contains internal management types. The corpus model contains types for the actual payload of the
+BTS.
+
+Following are two graphs that describe the relationship between all types, one for each model.
 
 .. figure:: graphs/basemodel_interface_graph.png
     :width: 100%
@@ -40,13 +41,16 @@ der Datenbank zu finden sind.
 .. _`basemodel_type_graph.pdf`: graphs/basemodel_type_graph.pdf
 .. _`corpusmodel_type_graph.pdf`: graphs/corpusmodel_type_graph.pdf
 
-Definierte eClasses des Basis-Modells
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Tables of Defined eClass Values
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Following is a table per model of all defined eClasses including information on whether they are to be found in the
+database.
 
 .. table::
 
     ======================================================= =================== =============
-    eClass                                                  In Datenbank [#db]_ Anmerkungen
+    eClass                                                  In database [#db]_  Notes
     ======================================================= =================== =============
     ``http://btsmodel/1.0#//AdministrativDataObject``       ✘
     ``http://btsmodel/1.0#//BTSComment``                    ✔
@@ -84,13 +88,10 @@ Definierte eClasses des Basis-Modells
     ``http://btsmodel/1.0#//StringToStringMap``             ✘                   [#implonly]_
     ======================================================= =================== =============
 
-Definierte eClasses des Corpus-Modells
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 .. table::
 
     ======================================================= =================== =============
-    eClass                                                  In Datenbank [#db]_ Anmerkungen
+    eClass                                                  In database [#db]_  Notes
     ======================================================= =================== =============
     ``http://btsCorpusModel/1.0#//BTSAbstractParagraph``    ✘
     ``http://btsCorpusModel/1.0#//BTSAbstractText``         ✘
@@ -120,13 +121,93 @@ Definierte eClasses des Corpus-Modells
     ``http://btsCorpusModel/1.0#//BTSWord``                 ✔
     ======================================================= =================== =============
 
-.. [#db] Ist die jeweilige eClass zwar im Modell vorhanden, aber nirgendwo in der Datenbank zu finden? Das ist z.B. bei
-    rein abstrakten Basisklassen der Fall.
-.. [#implonly] Es ist kein separates Interface vorhanden. Die zugehörige Impl-Klasse benutzt ein generisches
-    Eclipse-Interface.
+.. [#db] This eClass is present only in the model, not in the database. This is the case e.g. for abstract base types.
+.. [#implonly] There is no custom implementation of this eClass. The corresponding interface uses a generic
+    implementation from eclipse.
 
-Objekttypen des Basis-Modells
------------------------------
+Database types
+--------------
+
+There are several different database types that are used by the BTS.
+
+.. NOTE::
+    A single CouchDB instance may contain several "databases", each of which may contain a whole bunch of disparate
+    "documents".
+
+Global
+~~~~~~
+
+These global databases are present exactly once and are common to all projects and corpora.
+
+.. _`Global admin database`:
+
+:``admin``:
+    This database contains miscellaneous global data. It contains all `BTSProject`_ instances as well as the
+    `BTSUser`_ and `BTSUserGroup`_ instances used for access control.
+
+.. _`Global notification database`:
+
+:``notification``:
+    This database is used for a homebrewn locking scheme. See `DBLease`_.
+:``users``:
+    This is a couchdb-internal database.
+:``replicator``:
+    This is a couchdb-internal database.
+
+Project
+~~~~~~~
+
+The project databases exist up to once per project. Sometimes, a project does not have all possible project
+databases.
+
+.. _`project corpus index database`:
+
+:``{project name}_corpus``:
+    This database is basically an index of all corpora that are part of this project through their respective
+    `BTSTextCorpus`_ objects.
+
+.. _`project admin database`:
+
+:``{project name}_admin``:
+    This database contains the project's configuration, as in `BTSConfig`_. For some reason, it also contains all
+    `BTSComment`_ objects that belong to this project.
+
+.. _`project word list database`:
+
+:``{project name}_wlist``:
+    This is the project's word list. It contains all `BTSLemmaEntry`_ objects of this project. The texts in the
+    project have their words linked into this database. Objects are keyed by their ~6-digit decimal lemma keys.
+
+.. _`project thesaurus database`:
+
+:``{project name}_ths``:
+    This is the project's thesaurus database. It contains all `BTSThsEntry`_ objects belonging to this project.
+    Basically you can consider this database a project-specific grand enum table.
+
+.. _`project atext database`:
+
+:``{project name}_atext``:
+    This database type is almost entirely unused. This seems to be part of some unfinished feature.
+
+Corpora
+~~~~~~~
+
+The private corpus database exists once per corpus. These contain the bulk of the data in the BTS.
+
+.. _`private corpus database`:
+
+:``{project name}_corpus_{corpus name}``:
+    This database contains all `BTSCorpusObject`_ instances that belong to this project. This is mostly
+    `BTSTCObject`_ and `BTSText`_ instances.
+
+.. to generate data type-database statistics:
+    for infix in corpus.; begin echo $infix; jq -c '.docs[].eClass' *$infix*json | sort | uniq -c | sort -h; echo; end | tee typestats; end
+    for infix in admin.json; begin echo $infix; jq -c '.docs[].eClass' admin.json | sort | uniq -c | sort -h; echo; end | tee -a typestats; end
+    for infix in users replicator notification _admin wlist ths corpus_ atext; begin echo $infix; jq -c '.docs[].eClass' *$infix*.json | sort | uniq -c | sort -h; echo; end | tee -a typestats; end
+
+
+Object types of the base model
+------------------------------
 
 AdministrativDataObject
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -212,6 +293,9 @@ BTSComment
 A ``BTSComment`` describes a human-language comment on some object or text section. All comments on a project are stored in
 the project's ``{project name}_admin`` database and link to their target object or text part by means of exactly one
 `partOf`_ `BTSRelation`_.
+
+.. NOTE::
+    All `BTSComment`_ instances are stored in the `project admin database`_.
 
 .. ATTENTION::
     Do not confuse this with `BTSAnnotation`_, which describes a highlighted part of a text.
@@ -355,6 +439,9 @@ kitchen sink, from UI defaults through the ACL to the database schema.  The top-
 root of the config tree. Its descendants are all `BTSConfigItem`_. They are stored in the ``children`` attribute
 inherited from `BTSConfig`_. Have a look at the `Config Graph`_ to see how this is actually used.
 
+.. NOTE::
+    All `BTSConfiguration`_ instances are stored in the `project admin database`_.
+
 :``provider``:
     A symbolic name of the config. This is only used to find the configuration object specified in the application
     preferences. There is no reason the ``_id`` could not be used there.
@@ -406,6 +493,8 @@ Fields for local caching of values
 
 __ https://github.com/telota/bts/blob/7f7933ae338cbb22553156658823f42e3464dac5/db/dao-couch/src/org/bbaw/bts/dao/couchDB/CouchDBDao.java#L590
     
+.. _`DBCollectionKey`:
+
 :``DBCollectionKey``:
     Not written to db. This field is populated in `CouchDBDao.java`__ and caches the name of the local elasticsearch
     index that contains the object this field belongs to.
@@ -515,6 +604,9 @@ totally different format (mangled UUID) instead.
 
 Since in different places different ID formats are used (see `BTSIdentifiableItem`_), ``BTSIDReservationObject`` allows
 prefixes. There is no further scoping or proper namespacing.
+
+.. NOTE::
+    All `BTSIDReservationObject`_ instances are stored in the `project word list database`_.
 
 .. ATTENTION:: The details of the reservation logic are controlled by the ``propertyStrings`` field on the
     `BTSProjectDBCollection`_ belonging to the active (dictionary) object.
@@ -798,6 +890,9 @@ looking into this is `getDBCollection in PermissionsAndExpressionsEvaluationCont
 The BTSProject is not exposed much in the user interface. The main contact area with this type is the installer, where
 one can select one or multiple projects to download.
 
+.. NOTE::
+    All `BTSProject`_ instances are stored in the `global admin database`_.
+
 :``prefix``:
     "key" of this project, such as ``"aaew"`` in case of the Altägyptisches Wörterbuch. Among others, this is used in
     the database name of this project's personal database.
@@ -967,6 +1062,9 @@ In addition to the specific fields below, some `BTSUser`_ objects have their inh
 to a list containing one `BTSExternalReference`_ of type ``aaew_1`` with a string-formatted small number that apparently
 is this user's ID in a previous incarnation of the BTS.
 
+.. NOTE::
+    All `BTSUser`_ instances are stored in the `global admin database`_.
+
 :``comment``:
     Not used.
 :``dbAdmin``:
@@ -1002,6 +1100,9 @@ BTSUserGroup
 This type describes a group of users. The group membership is managed in the individual `BTSUser`_ objects via their
 ``groupIds`` field. `BTSUserGroup`_ is a subtype of `BTSObject`_.
 
+.. NOTE::
+    All `BTSUserGroup`_ instances are stored in the `global admin database`_.
+
 :``name``:
     This field contains the human-readable long-form name of this group, such as ``"Totenbuch-Projekt, Ägyptologisches Seminar der Universität Bonn"``.
     This field is not present in ``terminated`` groups.
@@ -1030,6 +1131,9 @@ created for every object that is opened in the BTS. This is done via the selecti
 The logic behind lock creation (e.g. `acquireLockOptimistic in BTSEvaluationServiceImpl.java`_) is very racy. Also,
 there is no good guarantee that things that are locked are also unlocked in time. And locks expire at some point, and
 AFAICT there is noone actively checking when exactly that happens.
+
+.. NOTE::
+    All `DBLease`_ instances are stored in the `global notification database`_.
 
 .. _`setSelection in PermissionsAndExpressionsEvaluationController.java`: https://github.com/telota/bts/blob/7f7933ae338cbb22553156658823f42e3464dac5/core/controller-impl/src/org/bbaw/bts/core/controller/impl/generalController/PermissionsAndExpressionsEvaluationControllerImpl.java#L150-L198
 .. _`acquireLockOptimistic in BTSEvaluationServiceImpl.java`: https://github.com/telota/bts/blob/7f7933ae338cbb22553156658823f42e3464dac5/core/core-services-impl/src/org/bbaw/bts/core/services/impl/services/BTSEvaluationServiceImpl.java#L416-L468
@@ -1102,6 +1206,13 @@ BTSAnnotation
 inheriting a whole slew of miscellaneous fields. The usage of `BTSAnnotation`_ is a bit patchy.  Following is a list of
 all nontrivial fields that are used with `BTSAnnotation`_. The two semantically most relevant fields are ``type`` and
 ``name``, as well as the one `partOf`_ `BTSRelation`_.
+
+.. NOTE::
+    A `BTSAnnotation`_ on some object is stored in the same database as the target object. This means an annotation
+    on e.g. a `BTSCorpusObject`_ will be stored in the corpuses `private corpus database`_ while an annotation on a
+    `BTSLemmaEntry`_ will be stored in the project's `project word list database`.
+
+.. TODO verify this storage association
 
 .. ATTENTION::
     Do not confuse this with `BTSComment`_, which describes a human-readable comment on some object *or* part of text.
@@ -1232,6 +1343,9 @@ such also includes everything of `BTSNamedTypedObject`_, `AdministrativDataObjec
 
     _id, name, type, subtype, sortKey, code, relations, externalReferences, revisions, state, revisionState, visibility
 
+.. NOTE::
+    All instances of `BTSCorpusObject`_ is stored in the `private corpus database`_.
+
 .. ATTENTION::
     Do not confuse this with the similarly named ``BTSTCObject`` (from "Text Corpus Object") or ``BTSTextCorpus``. Both
     are subclasses of ``BTSCorpusObject``. The later is an individual corpus such as the ``bbawfelsinschriften`` while
@@ -1271,9 +1385,12 @@ implementation the BTS grammar is more lenient than the one of `JSesh`_. A good 
     This is an integer field that in rare cases is used to reorder ``graphics`` within a word. When the sentence is
     translated into `MdC`_ for display, each word's ``graphics`` are passed through a stable sort keyed on
     ``innerSentenceOrder``. This results in the intermediate `MdC`_ representation of the word passed to `JSesh`_ being
-    in a different order.
+    in a different order. The reason for this is that there are cases of words which are written in hieroglyphs in a
+    different order than they are pronounced. In the BTS, the oder of words in the database always follows the
+    pronunciation and transliteration. To allow for the hieroglyph rendering assuming a different order,
+    ``innerSentenceOrder`` may be set.
 
-.. TODO exactly explain what ``innerSentenceOrder`` does.
+.. TODO Add an example to ``innerSentenceOrder``
 
 .. _`MdC`: https://en.wikipedia.org/wiki/Manuel_de_Codage
 .. _`cartouche`: https://en.wikipedia.org/wiki/Cartouche
@@ -1310,10 +1427,107 @@ and thus also a `BTSIdentifiableItem`_.
 BTSLemmaEntry
 ~~~~~~~~~~~~~
 
+This type describes a single lemma in the project's dictionary. It is a direct subtype of `BTSCorpusObject`_ and as
+such uses many of its fields including the passport.
+
+.. NOTE::
+    All `BTSLemmaEntry`_ instances are stored in the `project word list database`_.
+
 .. ATTENTION::
     Do not confuse this with `BTSLemmaCase`_. These two a totally diferrent. `BTSLemmaEntry`_ describes a single
     dictionary entry. `BTSLemmaCase`_ one of several alternative transliterations in a `BTSSenctence`_ via
     `BTSAmbivalence`_.
+
+Notable inherited fields
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+:``type``:
+:``subtype``:
+    These are used to express the word type of this entry such as ``substantive`` or ``aadjective`` for ``type`` and
+    ``verb_4-inf`` or ``kings_name`` for ``subtype``.  Possible values are enumerated in the `BTSConfig`_ under
+    ``√.objectTypes.Lemma``.
+
+:``name``:
+    This field contains the unicode transliteration of the lemma's egyptian pronunciation.
+
+:``revisionState``:
+    This field contains a lifecycle state for this entry.
+
+    =========================== ===== =========
+                                Count Frequency
+    =========================== ===== =========
+    null                           10     0.02%
+    "new"                          12     0.02%
+    "obsolete"                    752     1.44%
+    "published-obsolete"         3723     7.13%
+    "published-awaiting-review" 14250    27.30%
+    "published"                 33451    64.08%
+    =========================== ===== =========
+
+:``relations``:
+    While the rest of the BTS exclusively uses partOf_ relations_, lemmata heavily use all sorts of relations. Below is
+    a list detailing how many BTSLemmaEntry_ there are with a given number of relations_.
+
+    ============== ===== =========
+    # of relations Count Frequency
+    ============== ===== =========
+    0              47070    69.97%
+    1              12498    18.58%
+    2               4221     6.27%
+    3               1379     2.05%
+    4                704     1.05%
+    5                369     0.55%
+    6                240     0.36%
+    7                137     0.20%
+    8                129     0.19%
+    9                 69     0.10%
+    ...
+    71                 1     0.00%
+    73                 1     0.00%
+    75                 1     0.00%
+    77                 1     0.00%
+    91                 1     0.00%
+    ============== ===== =========
+
+.. _relations: BTSRelation_
+
+Specific fields
+^^^^^^^^^^^^^^^
+
+:``translations``:
+    This field contains a BTSTranslations_ object containing all the translations of this entry into several languages.
+
+:``words``:
+    This field contains the words of this entry. A BTSLemmaEntry_ of a compound word should ideally consist of several
+    words, however there is no mechanism that guarantees this.
+    
+    In many cases, the latter entries of ``words`` have their ``wChar`` field surrounded by parentheses as in ``(foo)``.
+    This is to mark collocations in specializations of a verb. That is, a verb ``have`` that has a broad meaning is
+    present in the word list with one generic entry for the verb and with a number of specialized entries, one for each
+    collocation and meaning ``have (kittens)``. These cases are also expressed through partOf_ and ``contains``
+    relations_.
+
+    Below is a table of how many entries there are with a given length of ``words``.
+
+    ====== ===== =========
+    Length Count Frequency
+    ====== ===== =========
+    1      50689    97.11%
+    2       1223     2.34%
+    3        185     0.35%
+    4         45     0.09%
+    0         24     0.05%
+    5         19     0.04%
+    6          7     0.01%
+    7          6     0.01%
+    ====== ===== =========
+
+    .. ATTENTION::
+        Note that there are many cases of entries that have several words where all hieroglyphs are bunched into the
+        first word, and the later words only contain MdC_. This is an artifact of the initial data import.
+
+:``ignore``:
+    This field is unused.
 
 BTSMarker
 ~~~~~~~~~
@@ -1496,7 +1710,19 @@ This type is a simple container for a list of `BTSSenctence`_ objects. It is a v
 BTSTextCorpus
 ~~~~~~~~~~~~~
 
-.. TODO BTSTextCorpus
+A `BTSTextCorpus`_ is sort of a top-level folder for `BTSCorpusObject`_ instances. A `BTSTextCorpus`_ belongs to exactly
+one `BTSProject`_. It is a basic `BTSCorpusObject`_ with two quirks: It may contain a `BTSCorpusHeader`_ (which in
+practice it never does) and it has a flag ``active`` that is not persisted in the database. The list of active corpora
+is stored in the app's preferences.
+
+Each `BTSTextCorpus`_ has its own CouchDB database (i.e. database within the same CouchDB instance). The association
+between a `BTSProject`_ and its corpora is done via the names of these databases. The format is ``{project
+name}_corpus_{corpus name}``, e.g. ``aaew_corpus_bbawgrabinschriften``. When anything is loaded from a corpuses
+database, the non-persisted `DBCollectionKey`_ field inherited from `BTSDBBaseObject`_ is set to the database name. The
+content of this field is later used to access the project.
+
+.. NOTE::
+    A corpuses `BTSTextCorpus`_ instance is stored in the `project corpus index database`_.
 
 BTSTextItems
 ~~~~~~~~~~~~
@@ -1540,6 +1766,9 @@ Meer`` contains ``Wadi Abbad``.
     There may be BTSThsEntry objects without parents. Also there might be some with several parents. Just keep that in
     mind.
 
+.. NOTE::
+    All `BTSThsEntry`_ instances are stored in the `project thesaurus database`_.
+
 BTSWord
 ~~~~~~~
 
@@ -1553,8 +1782,9 @@ never used with it.
 .. TODO check the definition of this with Jakob and Simon
 
 :``lKey``:
-    This field is only used when this `BTSWord`_ is part of a transliteration in a `BTSText`_. If this `BTSWord`_ is
-    part of a `BTSLemmaEntry`_, this field is always null.
+    This field is mostly used when this `BTSWord`_ is part of a transliteration in a `BTSText`_. If this `BTSWord`_ is
+    part of a BTSLemmaEntry_, this field is null most of the time but may point to other entries in case of a compound
+    word.
 
     This field contains the couchDB object ``_id`` of the `BTSLemmaEntry`_ this word can be found in. Note that
     `BTSLemmaEntry`_ object ids are human-readable short numbers (5-6 digit) that also serve as human-readable
